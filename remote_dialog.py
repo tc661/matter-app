@@ -7,11 +7,12 @@ import os
 # ----------------------------- Remote File Dialog -----------------------------------------------
 class RemoteFileDialog(QDialog):
     """Remote file browser via SFTP"""
-    def __init__(self, sftp, start_path="."):
+    def __init__(self, sftp, start_path=".", filters=None):
         super().__init__()
         self.sftp = sftp
         self.current_path = start_path
         self.selected_file = None
+        self.filters = filters
 
         self.setWindowTitle("Remote File Browser")
         self.resize(600, 400)

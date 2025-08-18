@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QPlainTextEdit, QDockWidget,
-    QTextEdit, QFileDialog, QMessageBox
+    QTextEdit, QFileDialog, QMessageBox, QLabel
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPixmap
 
 import os
 import shutil
@@ -77,11 +77,14 @@ class MainWindow(QMainWindow):
         self.act_open_local = QAction("Open Local Structure...", self)
         self.act_open_local.triggered.connect(self.open_local_structure)
 
-        self.act_open_remote = QAction("Open Remote Structure...", self)
-        self.act_open_remote.triggered.connect(self.open_remote_structure)
+        self.act_open_remote_struc = QAction("Open Remote Structure...", self)
+        self.act_open_remote_struc.triggered.connect(self.open_remote_structure)
 
         self.act_open_text = QAction("Open Text File...", self)
         self.act_open_text.triggered.connect(self.open_text_file)
+
+        self.act_open_remote_img = QAction("Open Remote Image...", self)
+        self.act_open_remote_img.triggered.connect(self.open_remote_image)
 
         self.act_quit = QAction("Quit", self)
         self.act_quit.triggered.connect(self.close)
@@ -113,7 +116,8 @@ class MainWindow(QMainWindow):
     def _make_menus(self):
         m_file = self.menuBar().addMenu("&File")
         m_file.addAction(self.act_open_local)
-        m_file.addAction(self.act_open_remote)
+        m_file.addAction(self.act_open_remote_struc)
+        m_file.addAction(self.act_open_remote_img)
         m_file.addSeparator()
         m_file.addAction(self.act_open_text)
         m_file.addSeparator()
@@ -191,6 +195,34 @@ class MainWindow(QMainWindow):
             self._log(f"Opened text: {path}")
         except Exception as e:
             QMessageBox.warning(self, "Open Text", f"Failed to read file:\n{e}")
+
+    def open_remote_image(self):
+        if not self.hpc.ssh_client:
+            QMessageBox.information(self, "HPC", "Connect to an HPC Host first.")
+            return
+
+        sftp = self.hpc.ssh_client.open_sftp()
+        try:
+            dlg = RemoteFileDialog(sftp, start_path=".", filters=["*.png", "*.jpg", "*.jpeg"])
+            if dlg.exec():
+                remote_path = dlg.selected_file
+                base = os.path.basename(remote_path)
+                local_tmp = os.path.join(tempfile.gettempdir(), base or "remote_image")
+                sftp.get(remote_path, local_tmp)
+
+                # Display in a new tab
+                pixmap = QPixmap(local_tmp)
+                lbl = QLabel()
+                lbl.setPixmap(pixmap)
+                lbl.setAlignment(Qt.AlignCenter)
+
+                tab_name = f"Image: {base}"
+                self.tabs.addTab(lbl, tab_name)
+                self.tabs.setCurrentWidget(lbl)
+
+                self._log(f"Loaded remote image: {remote_path} -> {local_tmp}")
+        finally:
+            sftp.close()
     
     def toggle_fullscreen(self, checked):
         if checked:
