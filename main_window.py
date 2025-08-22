@@ -37,7 +37,10 @@ class MainWindow(QMainWindow):
         # Docks
         self.hpc_dock = QDockWidget("HPC", self)
         self.hpc = HPCClient()
+        self.hpc.main_window = self # So HPC client can log to main window
         self.hpc_dock.setWidget(self.hpc)
+        self.hpc_dock.setMaximumWidth(350)
+        self.hpc_dock.setMinimumWidth(200)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.hpc_dock)
 
         self.info_dock = QDockWidget("Material Info", self)

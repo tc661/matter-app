@@ -1,12 +1,13 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QComboBox, QLabel,
-    QLineEdit, QPushButton, QTextEdit
+    QLineEdit, QPushButton, QTextEdit, QStackedLayout
 )
 import paramiko
 import os
 import tempfile
 
 from ssh_helpers import get_ssh_params
+from remote_browser import RemoteFileBrowser
 from remote_dialog import RemoteFileDialog
 
 
@@ -15,16 +16,41 @@ class HPCClient(QWidget):                           # QWidget = Parent Class
     # ============ Initialisation ============
     def __init__(self):
         """INITIALISE CLIENT AND SET UP WINDOW"""
-        super().__init__()                          # Initialise as QWidget
-        self.setWindowTitle("HPC → VASP Frontend")  
-        self.ssh_client = None                      
+        super().__init__()                          # Initialise as QWidget  
+        self.ssh_client = None
+        self.sftp = None                      
         self.hpc_host = ""
         self.hpc_user = ""
+        self.main_window = None
         
-        layout = QVBoxLayout()                      # Vertical layout
+        # Stacked layout
+        self.stack = QStackedLayout(self)
+
+        # Connection page
+        self.connection_page = QWidget()
+        self._make_connection_page()
+        self.stack.addWidget(self.connection_page)
+
+        # Browser pafe
+        self.browser_page = None
+
+
+    def _make_connection_page(self):
+        layout = QVBoxLayout(self.connection_page)                      # Vertical layout
 
         # Alias dropdown
-        self.alias_dropdown = QComboBox()       
+        alias_layout = QVBoxLayout()
+        alias_layout.setSpacing(2)
+        alias_label = QLabel("Select SSH Alias / Host:")
+        alias_label.setMaximumHeight(20)
+        alias_layout.addWidget(alias_label)
+
+        self.alias_dropdown = QComboBox()
+        self.alias_dropdown.setMaximumHeight(25)
+        alias_layout.addWidget(self.alias_dropdown)
+
+        layout.addLayout(alias_layout)
+
         self.alias_dropdown.setToolTip("Select host")           
         self.alias_dropdown.addItem("")                         # Empty by default
         ssh_config_path = os.path.expanduser("~/.ssh/config")   # .ssh config path
@@ -37,9 +63,6 @@ class HPCClient(QWidget):                           # QWidget = Parent Class
             for host in self.aliases:
                 self.alias_dropdown.addItem(host)               # Adds aliases to dropdown
         self.alias_dropdown.addItem("Manual Host")              # Manual host option
-
-        layout.addWidget(QLabel("Select SSH Alias / Host:"))
-        layout.addWidget(self.alias_dropdown)
 
         # Manual host fields
         self.manual_container = QWidget()                       # Container holds manual host optopms
@@ -62,25 +85,16 @@ class HPCClient(QWidget):                           # QWidget = Parent Class
         self.pass_input.setEchoMode(QLineEdit.EchoMode.Password)
         layout.addWidget(self.pass_input)           # HPC Password
 
+        # Status box
+        self.status_box = QTextEdit()
+        self.status_box.setReadOnly(True)
+        self.status_box.setMaximumHeight(100)
+        layout.addWidget(self.status_box)
+
         # Connect Button
         connect_btn = QPushButton("Connect")
         connect_btn.clicked.connect(self.connect_hpc)
         layout.addWidget(connect_btn)               # HPC Connection Button (connect_hpc)
-
-
-        # Job listing
-        self.jobs_box = QTextEdit()
-        self.jobs_box.setReadOnly(True)             
-        layout.addWidget(self.jobs_box)             # Read-Only Jobs Window
-
-        list_jobs_btn = QPushButton("List My Jobs")
-        list_jobs_btn.clicked.connect(self.list_jobs)
-        layout.addWidget(list_jobs_btn)             # List Jobs Button (list_jobs)
-
-        # Remote POSCAR
-        get_poscar_btn = QPushButton("Pick Remote File...")
-        get_poscar_btn.clicked.connect(self.pick_remote_file)
-        layout.addWidget(get_poscar_btn)            # POSCAR View Button (get_and_view_poscar)
 
         self.setLayout(layout)                      # Attaches layout to window
         self.local_last_download = None             # Path to last downloaded file
@@ -110,13 +124,16 @@ class HPCClient(QWidget):                           # QWidget = Parent Class
                 )
                 self.hpc_user = params["username"] or ""
                 self.hpc_host = params["hostname"]
-                self.jobs_box.setPlainText(f"✅ Connected via alias '{alias}'")
+                self.status_box.setPlainText(f"✅ Connected via alias '{alias}'")
+                # Enter file browser
+                self.sftp = self.ssh_client.open_sftp()
+                self._enter_browser()
             elif alias == "Manual Host":
                 # Connect manually
                 host = self.manual_host_input.text().strip()
                 user = self.manual_user_input.text().strip()
                 if not host or not user:
-                    self.jobs_box.setPlainText("❌ Enter hostname and username for manual host")
+                    self.status_box.setPlainText("❌ Enter hostname and username for manual host")
                     return
                 self.ssh_client.connect(
                     hostname=host,
@@ -125,42 +142,49 @@ class HPCClient(QWidget):                           # QWidget = Parent Class
                 )
                 self.hpc_user = user
                 self.hpc_host = host
-                self.jobs_box.setPlainText(f"✅ Connected to manual host {host}")
+                self.status_box_box.setPlainText(f"✅ Connected to manual host {host}")
+                # Enter file browser
+                self.sftp = self.ssh_client.open_sftp()
+                self._enter_browser()
             else:
-                self.jobs_box.setPlainText("❌ Select an alias or manual host")
+                self.status_box.setPlainText("❌ Select an alias or manual host")
+        
         except Exception as e:
-            self.jobs_box.setPlainText(f"❌ Connection failed: {e}")
+            self.status_box.setPlainText(f"❌ Connection failed: {e}")
     
 
-    # ============ Jobs ============
-    def list_jobs(self):
-        """LIST JOBS WHEN CONNECTED"""
-        if not self.ssh_client:                     # Can't list jobs when not on HPC
-            self.jobs_box.setPlainText("Not connected.")
-            return
-        try:
-            stdin, stdout, stderr = self.ssh_client.exec_command(f"qstat -u {self.hpc_user}")
-            output = stdout.read().decode()         # Interprets results of qstat
-            self.jobs_box.setPlainText(output if output else "No jobs running.")
-        except Exception as e:
-            self.jobs_box.setPlainText(f"Error listing jobs: {e}")
-    
+    def _enter_browser(self):
+        if self.browser_page:
+            self.stack.removeWidget(self.browser_page)
 
-    # ============ File viewing ============
-    def pick_remote_file(self):
-        """Opens remote browser and downloads selected file to a temp path"""
-        if not self.ssh_client:                     # Can't view POSCAR if not connected
-            self.jobs_box.setPlainText("❌ Not connected to HPC.")
-            return
-        sftp = self.ssh_client.open_sftp()
-        try:
-            dialog = RemoteFileDialog(sftp, start_path=".")
-            if dialog.exec():
-                remote_path = dialog.selected_file
-                base = os.path.basename(remote_path)
-                local_tmp = os.path.join(tempfile.gettempdir(), base or "remote_file")
-                sftp.get(remote_path, local_tmp)        # Downloads POSCAR from HPC to local temp file by SFTP
-                self.local_last_download = local_tmp      
-                self.jobs_box.setPlainText(f"✅ File downloaded from {remote_path} to {local_tmp}")
-        finally:
-            sftp.close()
+        def log_to_main_window(message):
+            if self.main_window:
+                self.main_window._log(message)
+
+
+        self.browser_page = RemoteFileBrowser(
+            self.sftp,
+            start_path=".",
+            disconnect_callback=self.disconnect_hpc,
+            ssh_client=self.ssh_client,
+            hpc_user=self.hpc_user,
+            log_callback=log_to_main_window
+        )
+        self.stack.addWidget(self.browser_page)
+        self.stack.setCurrentWidget(self.browser_page)
+
+        if hasattr(self.browser_page, 'local_last_download'):
+            self.local_last_download = self.browser_page.local_last_download
+
+    
+    def disconnect_hpc(self):
+        if self.sftp:
+            self.sftp.close()
+            self.sftp = None
+        if self.ssh_client:
+            self.ssh_client.close()
+            self.ssh_client = None
+        self.hpc_user = ""
+        self.hpc_host = ""
+        self.stack.setCurrentWidget(self.connection_page)
+        self.status_box.setPlainText("Disconnected from HPC")
