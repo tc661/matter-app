@@ -10,7 +10,10 @@ import tempfile
 # ----------------------------- Remote File Browser --------------------------------------------
 class RemoteFileBrowser(QWidget):
     """Embedded remote file browser"""
-    def __init__(self, sftp, start_path=".", filters=None, disconnect_callback=None, ssh_client=None, hpc_user="", log_callback=None):
+    def __init__(self, sftp, start_path=".",
+                 filters=None, disconnect_callback=None, ssh_client=None,
+                 hpc_user="", log_callback=None, file_open_callback=None):
+        
         super().__init__()
         self.sftp = sftp
         self.ssh_client = ssh_client
@@ -20,6 +23,7 @@ class RemoteFileBrowser(QWidget):
         self.disconnect_callback = disconnect_callback
         self.log_callback = log_callback
         self.local_last_download = None
+        self.file_open_callback = file_open_callback
 
         layout = QVBoxLayout()
 
@@ -123,6 +127,9 @@ class RemoteFileBrowser(QWidget):
             self.sftp.get(full_path, local_tmp)
             self.local_last_download = local_tmp
             self._log(f"File downloaded from {full_path} to {local_tmp}")
+
+            if base.lower().endswith((".png", ".jpg", ".jpeg")) and self.file_open_callback:
+                self.file_open_callback(local_tmp, base)
 
         except Exception as e:
             self._log(f"Error downloading file: {e}")

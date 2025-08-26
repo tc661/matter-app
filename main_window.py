@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QPlainTextEdit, QDockWidget,
-    QTextEdit, QFileDialog, QMessageBox, QLabel
+    QTextEdit, QFileDialog, QMessageBox, QLabel,
+    QScrollArea
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QPixmap
@@ -16,6 +17,7 @@ from ase.io import read # For viewing atomic structures
 from structure_viewer import StructureViewer
 from hpc_client import HPCClient
 from remote_dialog import RemoteFileDialog
+from image_viewer import ImageTab
 
 # ----------------------------- Main Window Shell -----------------------------
 class MainWindow(QMainWindow):
@@ -33,6 +35,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.viewer, "Structure")
         self.tabs.addTab(self.text_view, "Text Editor")
         self.setCentralWidget(self.tabs)
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
 
         # Docks
         self.hpc_dock = QDockWidget("HPC", self)
@@ -156,6 +160,13 @@ class MainWindow(QMainWindow):
         for dock_name, dock_widget in self.docks.items():
             dock_widget.show()
 
+    def close_tab(self, index):
+        widget = self.tabs.widget(index)
+        if isinstance(widget, ImageTab):
+            self.tabs.removeTab(index)
+        else:
+            self._log("This tab cannot be closed")
+
     # ============ Action Implementations ============
     def open_local_structure(self):
         filters = "Structure Files (*.POSCAR *.CONTCAR *.vasp);;All Files (*.*)"
@@ -213,15 +224,7 @@ class MainWindow(QMainWindow):
                 local_tmp = os.path.join(tempfile.gettempdir(), base or "remote_image")
                 sftp.get(remote_path, local_tmp)
 
-                # Display in a new tab
-                pixmap = QPixmap(local_tmp)
-                lbl = QLabel()
-                lbl.setPixmap(pixmap)
-                lbl.setAlignment(Qt.AlignCenter)
-
-                tab_name = f"Image: {base}"
-                self.tabs.addTab(lbl, tab_name)
-                self.tabs.setCurrentWidget(lbl)
+                self._make_image_tab(local_tmp, base)
 
                 self._log(f"Loaded remote image: {remote_path} -> {local_tmp}")
         finally:
@@ -312,3 +315,12 @@ class MainWindow(QMainWindow):
 
         self.info_box.setText("\n".join(lines))
 
+    def _make_image_tab(self, path, base):
+        pixmap = QPixmap(path).scaled(
+            600, 600,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        tab = ImageTab(pixmap)
+        idx = self.tabs.addTab(tab, base)
+        self.tabs.setCurrentIndex(idx)

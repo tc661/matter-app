@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 # ------------------------------- Main ------------------------------------
 def main():
     app = QApplication(sys.argv)
+    app.setStyle('Fusion')
 
     splash = QSplashScreen()
     splash.showMessage("Initialising MatterApp...", Qt.AlignCenter, Qt.black)
