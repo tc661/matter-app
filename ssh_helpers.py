@@ -2,6 +2,7 @@ import os
 import subprocess
 import paramiko
 from PySide6.QtCore import QThread, Signal, QCoreApplication
+from stat import S_ISDIR 
 
 # ----------------------------- Existing SSH helpers -----------------------------
 def get_ssh_params(alias):
@@ -100,3 +101,24 @@ class SSHThread(QThread):
             self.finished_signal.emit(True, "Connected")
         except Exception as e:
             self.finished_signal.emit(False, str(e))
+
+def remote_walk(sftp, path):
+    """
+    Recursively walk a remote directory over SFTP.
+
+    Yields: (dirpath, dirnames, filenames)
+    """
+    dirs, files = [], []
+    for f in sftp.listdir_attr(path):
+        if f.filename.startswith("."):
+            continue
+        full_path = path.rstrip("/") + "/" + f.filename
+        if S_ISDIR(f.st_mode):
+            dirs.append(f.filename)
+        else:
+            files.append(f.filename)
+    yield path, dirs, files
+    for d in dirs:
+        new_path = path.rstrip("/") + "/" + d
+        yield from remote_walk(sftp, new_path)
+

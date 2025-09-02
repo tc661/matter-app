@@ -1,24 +1,68 @@
 import os
 import re
+from ssh_helpers import remote_walk
+
+from procar_parser import Parser, BandData, interactive_procar_ui
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QLabel, QPushButton,
+    QMessageBox
+)
 
 class Material:
-    def __init__(self, path=None):
-        self.path = os.path.abspath(path or os.getcwd())
-        self.name = os.path.basename(self.path)
-        self.files = self.get_files()
-        self.runs = self.get_vasp_runs()
+    def __init__(self, folder_path=None, sftp=None):
+        self.folder_path = folder_path
+        self.sftp = sftp
+        self.is_remote = sftp is not None
+
+        # File detection
+        self.has_poscar = self._file_exists("POSCAR")
+        self.has_contcar = self._file_exists("CONTCAR")
+        self.has_incar = self._file_exists("INCAR")
+        self.has_outcar = self._file_exists("OUTCAR")
+        self.has_procar = self._file_exists("PROCAR")
+        self.has_fermi = self._file_exists("FERMI")
+        self.has_kpoints = self._file_exists("KPOINTS")
+        self.has_potcar = self._file_exists("POTCAR")
+
+        # self.structure = self._load_structure()
+        # self.formula = self._get_formula()
+
+    # =========== FILE HANDLING ===========
+
+    def _file_exists(self, filename):
+        """Check if a file exists in the folder."""
+        if self.is_remote:
+            try:
+                remote_path = self._join_remote_path(self.folder_path, filename)
+                self.sftp.stat(remote_path)
+                return True
+            except:
+                return False
+        else:
+            return os.path.exists(os.path.join(self.folder_path, filename))
+        
+    def _join_remote_path(self, base, filename):
+        """Join base path and filename for remote paths."""
+        base = base.replace('\\', '/')
+        if base.endswith('/'):
+            return base + filename
+        else:
+            return base + '/' + filename
     
-    def get_files(self):
+    def get_files(self, sftp, path):
         all_files = []
         try:
-            for root, dirs, files in os.walk(self.path):
+            for root, dirs, files in remote_walk(sftp, path):
                 for f in files:
                     all_files.append(os.path.join(root, f))
             return all_files
         except FileNotFoundError:
             print(f"Path not found: {self.path}")
             return []
-    
+
+    # =========== OUTCAR PROCESSING ===========
+
     def get_vasp_runs(self):
         # Gets stage of processing.
         runs = []
@@ -40,8 +84,68 @@ class Material:
                 })
         return runs
 
-#=========== POTENTIAL INCAR CLASS ===========
+#=========== PROCAR DIALOG CLASS ===========
+class ProcarDialog(QDialog):
+    def __init__(self, parent=None, procar_path=None, fermi_path=None):
+        super().__init__(parent)
+        self.setWindowTitle("PROCAR Band Structure Analysis")
+        self.setModal(False)
+        self.resize(300, 100)
 
+        layout = QVBoxLayout()
+
+        # Info label
+        info_label = QLabel("Interactive PROCAR analysis will open in a separate matplotlib window.")
+        layout.addWidget(info_label)
+        
+        # Launch button
+        launch_btn = QPushButton("Launch Interactive PROCAR Viewer")
+        launch_btn.clicked.connect(lambda: self.launch_procar_ui(procar_path, fermi_path))
+        layout.addWidget(launch_btn)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+        
+        self.setLayout(layout)
+
+    def launch_procar_ui(self, procar_path, fermi_path):
+        """Launch the interactive PROCAR UI"""
+        try:
+            # Parse PROCAR data
+            parser = Parser(procar_path=procar_path, fermi_path=fermi_path)
+            if not parser.procar:
+                QMessageBox.warning(self, "PROCAR Error", "Failed to parse PROCAR file")
+                return
+            
+            # Create BandData object
+            band_data = BandData(parser.procar, parser.fermi or 0.0)
+            
+            # Find fermi-level fatband for initial view
+            fatbands, minmax = band_data.identify_fatbands()
+
+            fermi_fatband = None
+            for fatband in fatbands:
+                if fatband["E-min"] <= (parser.fermi or 0.0) <= fatband["E-max"]:
+                    fermi_fatband = fatband
+                    break
+            
+            # Launch interactive UI (this will create its own matplotlib window)
+            interactive_procar_ui(
+                parser.procar, 
+                band_data.energies, 
+                band_data.weights, 
+                band_data.band_weights, 
+                parser.fermi or 0.0, 
+                fatband=fermi_fatband
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "PROCAR Error", f"Failed to launch PROCAR viewer:\n{str(e)}")
+
+
+#=========== POTENTIAL INCAR CLASS ===========
 def parse_INCAR(incar_path):
     params = {}
     encut = None

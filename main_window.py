@@ -18,6 +18,7 @@ from structure_viewer import StructureViewer
 from hpc_client import HPCClient
 from remote_dialog import RemoteFileDialog
 from image_viewer import ImageTab
+from remote_analysis import Material, ProcarDialog, display_material_info
 
 # ----------------------------- Main Window Shell -----------------------------
 class MainWindow(QMainWindow):
@@ -110,6 +111,11 @@ class MainWindow(QMainWindow):
 
         self.act_run_analysis = QAction("Run analysis.py (local)...", self)
         self.act_run_analysis.triggered.connect(self.run_analysis_local)
+        
+        # PROCAR Viewer
+        self.act_procar_analysis = QAction("PROCAR Band Analysis", self)
+        self.act_procar_analysis.triggered.connect(self.open_procar_analysis)
+        
 
         # Settings
         self.act_set_vesta = QAction("Set VESTA Executable", self)
@@ -147,6 +153,7 @@ class MainWindow(QMainWindow):
         m_tools = self.menuBar().addMenu("&Tools")
         m_tools.addAction(self.act_open_in_vesta)
         m_tools.addAction(self.act_run_analysis)
+        m_tools.addAction(self.act_procar_analysis)
 
         m_settings = self.menuBar().addMenu("&Settings")
         m_settings.addAction(self.act_set_vesta)
@@ -271,6 +278,95 @@ class MainWindow(QMainWindow):
             self._log(f"Ran analysis in: {folder}")
         except Exception as e:
             QMessageBox.warning(self, "analysis.py", f"Failed to run analysis:\n{e}")
+    
+
+    def open_procar_analysis(self):
+        """Open PROCAR band analysis for local or remote directory"""
+        if hasattr(self.hpc, 'current_path') and self.hpc.ssh_client:
+            self.open_remote_procar_analysis()
+        else:
+            self.open_local_procar_analysis()
+
+    def open_local_procar_analysis(self):
+        """Open PROCAR analysis for local directory"""
+        folder = QFileDialog.getExistingDirectory(
+            self, 
+            "Select directory containing PROCAR", 
+            self.last_open_dir
+        )
+        if not folder:
+            return
+        
+        procar_path = os.path.join(folder, "PROCAR")
+        fermi_path = os.path.join(folder, "FERMI")
+        
+        if not os.path.exists(procar_path):
+            QMessageBox.information(
+                self, 
+                "PROCAR Not Found", 
+                f"No PROCAR file found in {folder}"
+            )
+            return
+        
+        # Use None if FERMI doesn't exist
+        fermi_path = fermi_path if os.path.exists(fermi_path) else None
+        
+        dialog = ProcarDialog(self, procar_path, fermi_path)
+        dialog.show()
+
+
+    def open_remote_procar_analysis(self):
+        """Open PROCAR analysis for remote directory"""
+
+        if not hasattr(self.hpc, 'browser_page') or not self.hpc.browser_page:
+            QMessageBox.information(self, "Remote", "No remote connection active.")
+            return
+        
+        current_remote_path = self.hpc.browser_page.current_path
+        sftp = self.hpc.browser_page.sftp
+        
+        # Check for remote PROCAR
+        remote_procar = self.hpc.browser_page.join_remote_path(current_remote_path, "PROCAR")
+        remote_fermi = self.hpc.browser_page.join_remote_path(current_remote_path, "FERMI")
+        
+        try:
+            sftp.stat(remote_procar)  # Check if PROCAR exists
+        except:
+            QMessageBox.information(
+                self, 
+                "PROCAR Not Found", 
+                f"No PROCAR file found in {current_remote_path}"
+            )
+            return
+        
+        # Download files to temp directory
+        try:
+            temp_dir = tempfile.mkdtemp()
+            local_procar = os.path.join(temp_dir, "PROCAR")
+            local_fermi = os.path.join(temp_dir, "FERMI")
+            
+            # Download PROCAR
+            sftp.get(remote_procar, local_procar)
+            self._log(f"Downloaded PROCAR from {remote_procar}")
+            
+            # Try to download FERMI (optional)
+            try:
+                sftp.get(remote_fermi, local_fermi)
+                self._log(f"Downloaded FERMI from {remote_fermi}")
+            except:
+                local_fermi = None
+                self._log("FERMI file not found remotely, will use default")
+            
+            # Launch dialog
+            dialog = ProcarDialog(self, local_procar, local_fermi)
+            dialog.show()
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Download Error", 
+                f"Failed to download PROCAR files:\n{str(e)}"
+            )
 
     def set_vesta_path(self):
         exe, _ = QFileDialog.getOpenFileName(self, "Select VESTA executable", "", "Executables (*.exe *.cmd *);;All Files (*.*)")
@@ -288,6 +384,15 @@ class MainWindow(QMainWindow):
     # ============ Helper Functions ============ 
     def _log(self, msg):
         self.log_box.append(msg)
+
+    
+    def _update_info_from_material_folder(self, folder_path, sftp):
+        try:
+            mat = Material(folder_path, sftp)
+            summary = display_material_info(mat)
+            self.info_box.setText(summary)
+        except Exception as e:
+            self.info_box.setText(f"Error loading material info:\n{e}")
 
     def _update_info_from_structure(self, path):
         """Light info panel"""

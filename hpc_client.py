@@ -252,7 +252,8 @@ class HPCClient(QWidget):                           # QWidget = Parent Class
             ssh_client=self.ssh_client,
             hpc_user=self.hpc_user,
             log_callback=log_to_main_window,
-            file_open_callback=open_file_in_main
+            file_open_callback=open_file_in_main,
+            main_window=self.main_window
         )
         self.stack.addWidget(self.browser_page)
         self.stack.setCurrentWidget(self.browser_page)

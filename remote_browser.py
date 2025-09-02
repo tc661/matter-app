@@ -12,7 +12,8 @@ class RemoteFileBrowser(QWidget):
     """Embedded remote file browser"""
     def __init__(self, sftp, start_path=".",
                  filters=None, disconnect_callback=None, ssh_client=None,
-                 hpc_user="", log_callback=None, file_open_callback=None):
+                 hpc_user="", log_callback=None, file_open_callback=None,
+                 main_window=None):
         
         super().__init__()
         self.sftp = sftp
@@ -24,6 +25,7 @@ class RemoteFileBrowser(QWidget):
         self.log_callback = log_callback
         self.local_last_download = None
         self.file_open_callback = file_open_callback
+        self.main_window = main_window
 
         layout = QVBoxLayout()
 
@@ -46,6 +48,12 @@ class RemoteFileBrowser(QWidget):
         disconnect_btn.setMaximumWidth(100)
         disconnect_btn.clicked.connect(self.handle_disconnect)
         header_layout.addWidget(disconnect_btn)
+
+        # PROCAR button
+        procar_btn = QPushButton("PROCAR Analysis")
+        procar_btn.setMaximumWidth(120)
+        procar_btn.clicked.connect(self.launch_procar_analysis)
+        header_layout.addWidget(procar_btn)
 
         layout.addLayout(header_layout)
 
@@ -146,6 +154,22 @@ class RemoteFileBrowser(QWidget):
         else:
             return base + '/' + name
     
+    def launch_procar_analysis(self):
+        """Launch PROCAR analysis for current directory"""
+        if not self.main_window:
+            self._log("No main window callback defined for PROCAR analysis.")
+            return
+        
+        # Check if PROCAR exists in current directory
+        procar_path = self.join_remote_path(self.current_path, "PROCAR")
+        try:
+            self.sftp.stat(procar_path)
+            # PROCAR exists, trigger main window's remote PROCAR analysis
+            self.main_window.open_remote_procar_analysis()
+        except Exception as e:
+            self._log(f"Error checking PROCAR file: {e}")
+            self._log(f"No PROCAR file found in {self.current_path}")
+
     def refresh_list(self):
         self.list_widget.clear()
         self.current_path = self.normalise_remote_path(self.current_path)
@@ -200,7 +224,35 @@ class RemoteFileBrowser(QWidget):
             self.path_label.setText(f"Path: {self.current_path}")  # Window title
         except Exception as e:
             self.list_widget.addItem(f"Error reading directory: {e}")
+        
+        try:
+            poscar_path = self.join_remote_path(self.current_path, "POSCAR")
+            procar_path = self.join_remote_path(self.current_path, "PROCAR")
 
+            has_poscar = False
+            has_procar = False
+
+            try:
+                self.sftp.stat(poscar_path)
+                has_poscar = True
+            except:
+                pass
+
+            try:
+                self.sftp.stat(procar_path)
+                has_procar = True
+            except:
+                pass
+
+            if has_poscar:
+                self._log(f"Material folder detected: {self.current_path}")
+                if has_procar:
+                    self._log("PROCAR file available for band analysis.")
+
+                if hasattr(self.main_window, "_update_info_from_material_folder"):
+                    self.main_window._update_info_from_material_folder(self.current_path, self.sftp)
+        except:
+            pass
 
     def navigate_or_select(self, item):
         if not item:
@@ -215,6 +267,19 @@ class RemoteFileBrowser(QWidget):
             if S_ISDIR(stat_result.st_mode):
                 self.current_path = full_path
                 self.refresh_list()
+                #----MATERIAL DETECTION----
+                poscar_path = self.join_remote_path(self.current_path, "POSCAR")
+                try:
+                    self.sftp.stat(poscar_path)
+                    self._log(f"Material folder detected: {self.current_path}")
+                    if hasattr(self.main_window, "_update_info_from_material_folder"):
+                        self._log("Updating info")
+                        self.main_window._update_info_from_material_folder(self.current_path, self.sftp)
+                    else:
+                        self._log("No summary function detected")
+                except Exception:
+                    pass
+                #--------------------------
                 return
         except Exception as e:
             self.list_widget.addItem(f"Cannot access: {e}")
