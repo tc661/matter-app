@@ -523,7 +523,7 @@ def plot_bandstructure(bd, fermi=0.0, fatband=None, selected_ions=None, selected
 
 # ======================================= INTERACTIVE BANDSTRUCTURE WINDOW ====================================
 def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, fatband=None):
-    
+
     # Number of bands, kpoints, ions, orbitals
     nb, nk = procar["header"]["bands"], procar["header"]["kpoints"]
     ion_count = procar["header"]["ions"]
@@ -687,39 +687,46 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
         ybot = bot_line.get_y()
         ymin = min(ytop, ybot)
         ymax = max(ytop, ybot)
+        ymin_abs, ymax_abs = ymin+fermi, ymax+fermi # absolute energies
 
         # find band indices that have any energy within window (use min_max_energies)
         bands_in_window = []
         for b_idx in range(len(energies)):
             emin = energies[b_idx].min()   
             emax = energies[b_idx].max()
-            if not ((emax - fermi) < ymin or (emin - fermi) > ymax): # Absolute energies converted to relative
+            if not (emax < ymin_abs or emin > ymax_abs): # Absolute energies converted to relative
                 bands_in_window.append(b_idx)
 
         """ IMPROVEMENT: Option for exact per-kpoint weight calculation in window """
         # Approximate weights in window using overlap fraction
         sel_weight_in_window = 0.0
         weight_in_window = 0.0
-        for b in bands_in_window:
-            emin = energies[b].min(); emax = energies[b].max()
+        for b in bands_in_window:       # Iterate over bands in window
+            emin = energies[b].min(); emax = energies[b].max()  # Get min and max energy of band (absolute)
+            # If band is flat (emin==emax), check if in window
             if emax - emin < 1e-9:
-                overlap_frac = 1.0 if (emin>=ymin and emin<=ymax) else 0.0
+                overlap_frac = 1.0 if (emin>=ymin_abs and emin<=ymax_abs) else 0.0
+            # Else compute overlap fraction
             else:
-                overlap_low = max(emin, ymin)
-                overlap_high = min(emax, ymax)
+                overlap_low = max(emin, ymin_abs)
+                overlap_high = min(emax, ymax_abs)
                 overlap_len = max(0.0, overlap_high - overlap_low)
                 overlap_frac = overlap_len / (emax - emin)
+            # Add band weights to window weights scaled by overlap fraction
             sel_weight_in_window += sel_band_weights[b] * overlap_frac
             weight_in_window += band_total_weights[b] * overlap_frac
 
-
+        # Draw shaded window
         shaded_patch = ax_main.axhspan(ymin, ymax, color='yellow', alpha=0.12, zorder=5)
 
-        # plot
+        # X-axis: k-point indices
         nk_idx = np.arange(nk)
+
+        # Determine max and min total weights for linewidth/alpha scaling
         max_total = max(total_weights) if len(total_weights)>0 else 1.0
         min_total = min(total_weights) if len(total_weights)>0 else 0.0
 
+        # Plot each band
         for b_idx in range(len(energies)):
             band_y = energies[b_idx] - fermi  # relative energies
 
@@ -727,7 +734,7 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
             w = total_weights[b_idx] if total_weights is not None else 1.0
             norm_w = (w - min_total) / (max_total - min_total + 1e-12)
             lw = norm_w
-            alpha = 0.2 + 0.8*norm_w
+            alpha = 0.1 + 0.9*norm_w
 
             # highlight bands with high selected fraction
             is_highlight = frac[b_idx] >= slider.val
@@ -747,7 +754,13 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
         if bot_line.text: bot_line.text.set_zorder(101)
 
         # update side-panel stats
-        update_stats_and_text(s_ions, s_orbs, sel_band_weights, sel_weight_in_window, weight_in_window, bands_in_window, ymin, ymax)
+        update_stats_and_text(
+            s_ions, s_orbs, 
+            sel_band_weights, 
+            sel_weight_in_window, 
+            weight_in_window, 
+            bands_in_window, 
+            ymin, ymax)
 
         # update main canvas
         ax_main.relim(); ax_main.autoscale_view()
