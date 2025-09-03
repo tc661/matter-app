@@ -523,21 +523,16 @@ def plot_bandstructure(bd, fermi=0.0, fatband=None, selected_ions=None, selected
 
 # ======================================= INTERACTIVE BANDSTRUCTURE WINDOW ====================================
 def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, fatband=None):
+    
+    # Number of bands, kpoints, ions, orbitals
     nb, nk = procar["header"]["bands"], procar["header"]["kpoints"]
     ion_count = procar["header"]["ions"]
     orbitals = procar["header"]["orbitals"]
 
-    """
-    selected_ions = []
-    selected_orbs = []
-    soc_on = False
-    colors = itertools.cycle(plt.cm.tab20.colors)
-    ion_colors = {i: next(colors) for i in range(1, ion_count+1)}
-    """
-    
+    # Default highlight threshold
     highlight_threshold = 0.1
 
-    
+    # Figure layout
     fig = plt.figure(figsize=(12,7))
     ax_main = fig.add_axes([0.05, 0.12, 0.62, 0.82]) # Main Band Plot
     ax_orbit = fig.add_axes([0.72, 0.60, 0.1, 0.32]) # Orbital Checkboxes
@@ -546,14 +541,18 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
     ax_slider = fig.add_axes([0.1, 0.015, 0.4, 0.04])  # threshold slider
     ax_soc = fig.add_axes([0.55, 0.015, 0.08, 0.04])    # SOC button
 
+    # Turn off axes for non-plot areas
     ax_orbit.axis('off')
     ax_ions.axis('off')
     ax_text.axis('off')
+
+    # Main plot setup
     ax_main.set_title("Bandstructure (select orbitals/ions on right)")
     ax_main.set_xlabel("k-point index")
     ax_main.set_ylabel("Energy (eV relative to E_F)")
-    ax_main.axhline(0.0, color='red', linestyle='--', linewidth=1, zorder=2)
+    ax_main.axhline(0.0, color='red', linestyle='--', linewidth=1, zorder=2) # Fermi energy line
 
+    # Choose ylimits based on fatband and fermi energy
     if fatband is not None:
         ax_main.set_ylim(fatband["E-min"] - fermi, fatband["E-max"] - fermi)
 
@@ -574,9 +573,10 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
     slider = Slider(ax_slider, "Threshold", 0.0, 1.0, valinit=highlight_threshold)
 
     # draggable lines: start around fermi±1 eV
-    top_line = DraggableHLine(ax_main, fermi + 1.0, color='cyan', linestyle='-')
-    bot_line = DraggableHLine(ax_main, fermi - 1.0, color='cyan', linestyle='-')
+    top_line = DraggableHLine(ax_main, +1.0, color='cyan', linestyle='-')
+    bot_line = DraggableHLine(ax_main, -1.0, color='cyan', linestyle='-')
 
+    # secondary y-axis for absolute energy
     def rel_to_abs(E_rel): return E_rel+fermi
     def abs_to_rel(E_abs): return E_abs-fermi
     secax = ax_main.secondary_yaxis('right', functions=(rel_to_abs, abs_to_rel))
@@ -586,23 +586,26 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
     plotted_lines = []
     shaded_patch = None
 
+    # helper to get current projection selections
     def get_current_selection():
-        # gather selections from widgets
         s_orbs = [lab for lab, val in zip(orb_labels, orbit_cb.get_status()) if val]
         s_ions = [i+1 for i, val in enumerate(ion_cb.get_status()) if val]
         soc_state = soc_cb.get_status()[0]
         return s_ions, s_orbs, soc_state
 
+    # Function to calculate and update stats text
     def update_stats_and_text(selected_ions_list, selected_orbs_list, sel_weights, total_sel_weight_window, total_weight_window, window_band_idxs, y_min_rel, y_max_rel):
         
-        # compute wannier_count as (#selected ions * #selected orbitals * (2 if soc else 1))
+        # compute wannier_count as (#selected ions * selected orbitals * (2 if soc else 1))
         wannier_count = len(selected_ions_list) * len(selected_orbs_list) * (2 if soc_cb.get_status()[0] else 1)
+        # compute number of bands in window
         bands_in_window = len(window_band_idxs)
 
         # percentage of total selected weight included in window
         total_selected_weight_allbands = sel_weights.sum()
         pct_in_window = (total_sel_weight_window / total_selected_weight_allbands * 100.0) if total_selected_weight_allbands > 0 else 0.0
 
+        """IMPROVEMENT: Show in-band weights only rather than weights of entire band if any part in window"""
         # summary of top contributing ions/orbitals outside selection within window
         # compute contribution matrix for window
         other_contribs = {}
@@ -629,18 +632,22 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
             "",
             "Top other contributors in window:"
         ]
+        # Add top other contributors to text
         if top_other:
             for k, v in top_other:
                 lines.append(f"  {k}: {v:.4f}")
         else:
             lines.append("  None")
 
+        # update text box
         ax_text.clear()
         ax_text.axis('off')
-        ax_text.text(0, 0.95, "\n".join(lines), va='top', fontsize=9, family='monospace')
+        ax_text.text(0, 0.95, "\n".join(lines), va='top', fontsize=8, family='monospace')
 
+    # Main update function to redraw plot based on selections
     def update_plot(event=None):
-        # clear previous
+
+        # clear previous lines and shaded patches
         nonlocal plotted_lines, shaded_patch
         for ln in plotted_lines:
             try:
@@ -648,7 +655,6 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
             except:
                 pass
         plotted_lines = []
-
         if shaded_patch is not None:
             try:
                 shaded_patch.remove()
@@ -659,25 +665,24 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
         # read selections
         s_ions, s_orbs, soc_state = get_current_selection()
 
-        # compute per-band selected weights (sum over kpoints & ions & orbitals)
-        # but band_weights returns flattened across kpoints; here we use those aggregated weights
+
+        # compute per-band weights and selected weights
         sel_band_weights = np.zeros(len(weights))
         band_total_weights = np.zeros(len(weights))
-        for b in range(len(weights)):
+        for b in range(len(weights)):                   # Iterate over all bands
             band_sel = 0.0
             band_tot = 0.0
-            for i_idx, ion in enumerate(weights[b]):
-                for orb, w in ion.items():
-                    band_tot += w
-                    if (i_idx+1) in s_ions and orb in s_orbs:
-                        band_sel += w
+            for i_idx, ion in enumerate(weights[b]):    # Iterate over all ions in band
+                for orb, w in ion.items():              # Iterate over all orbitals in ion
+                    band_tot += w                       # Add to total weight for band
+                    if (i_idx+1) in s_ions and orb in s_orbs: # If ion and orbital are selected
+                        band_sel += w                   # Add to selected weight for band
             sel_band_weights[b] = band_sel
             band_total_weights[b] = band_tot if band_tot>0 else 1e-12
-
         # compute per-band fraction (selected fraction)
         frac = sel_band_weights / band_total_weights
 
-        # determine window indices by energy (use min/max y of lines)
+        # determine window indices by energy (Relative to fermi)
         ytop = top_line.get_y()
         ybot = bot_line.get_y()
         ymin = min(ytop, ybot)
@@ -686,14 +691,13 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
         # find band indices that have any energy within window (use min_max_energies)
         bands_in_window = []
         for b_idx in range(len(energies)):
-            emin = energies[b_idx].min() - fermi
-            emax = energies[b_idx].max() - fermi
-            if not (emax < ymin or emin > ymax):
+            emin = energies[b_idx].min()   
+            emax = energies[b_idx].max()
+            if not ((emax - fermi) < ymin or (emin - fermi) > ymax): # Absolute energies converted to relative
                 bands_in_window.append(b_idx)
 
-        # compute selected-orbital weight included within window (approx: proportion of band within energy window × band selected weight)
-        # For a simple estimate we assume weight is evenly distributed across kpoints for that band:
-        # fraction_of_band_energy_range_in_window = overlap_length / (emax-emin)
+        """ IMPROVEMENT: Option for exact per-kpoint weight calculation in window """
+        # Approximate weights in window using overlap fraction
         sel_weight_in_window = 0.0
         weight_in_window = 0.0
         for b in bands_in_window:
