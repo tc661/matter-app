@@ -686,8 +686,8 @@ def interactive_procar_ui(procar, energies, weights, total_weights, fermi=0.0, f
         # find band indices that have any energy within window (use min_max_energies)
         bands_in_window = []
         for b_idx in range(len(energies)):
-            emin = energies[b_idx].min()
-            emax = energies[b_idx].max()
+            emin = energies[b_idx].min() - fermi
+            emax = energies[b_idx].max() - fermi
             if not (emax < ymin or emin > ymax):
                 bands_in_window.append(b_idx)
 
